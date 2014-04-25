@@ -39,6 +39,8 @@ purpose:    发送H264视频到RTMP Server，使用libRtmp库
 int dvr_fd = 0;
 int enc_fd = 0;
 
+#define WIDTH 1280
+#define HEIGHT 720
 //test record
 unsigned char *bs_buf;
 HANDLE  rec_file;
@@ -319,30 +321,38 @@ bool CRTMPStream::SendH264Packet(unsigned char *data,unsigned int size,bool bIsK
 }  
 bool CRTMPStream::SendVideo()
 {
-	int ret = 0, ch_num = 0;    
-    int find_pps = 0 ,find_sps = 0;
+		int ret = 0, ch_num = 0;    
+
     dvr_enc_channel_param   ch_param;    
     EncParam_Ext3 enc_param_ext = {0};    
     dvr_enc_control  enc_ctrl;
     dvr_enc_queue_get   data;
-    unsigned char *buf;
-    int buf_size;      
+   
     FuncTag tag;        
     struct timeval t1,t2;  
     char tmp_str[128];
                  
-    printf("open %d\n",__LINE__);         
+        
     dvr_fd = open("/dev/dvr_common", O_RDWR);   //open_dvr_common
-    printf("open %d\n",__LINE__);       
+    if(dvr_fd == -1)
+  	{
+  		 printf("open dvr_common failed\n" );
+  		 return false;
+  	}       
     enc_fd = open("/dev/dvr_enc", O_RDWR);      //open_dvr_encode
-    printf("open %d\n",__LINE__);      
+    if(enc_fd == -1)
+  	{
+  		 printf("open dvr_enc failed\n" );
+  		 return false;
+  	} 
+ 
     //set dvr encode source parameter
     ch_param.src.input_system = MCP_VIDEO_NTSC;
     ch_param.src.channel = ch_num;
     ch_param.src.enc_src_type = ENC_TYPE_FROM_CAPTURE;
     
-    ch_param.src.dim.width = 1280;
-    ch_param.src.dim.height = 720;
+    ch_param.src.dim.width = WIDTH;
+    ch_param.src.dim.height = HEIGHT;
     
     ch_param.src.di_mode = LVFRAME_EVEN_ODD;
     ch_param.src.mode = LVFRAME_FRAME_MODE;
@@ -362,8 +372,8 @@ bool CRTMPStream::SendVideo()
     ch_param.main_bs.is_blocked = FALSE;
     ch_param.main_bs.en_snapshot = DVR_ENC_EBST_DISABLE;
     
-    ch_param.main_bs.dim.width = 1280;
-    ch_param.main_bs.dim.height = 720;
+    ch_param.main_bs.dim.width = WIDTH;
+    ch_param.main_bs.dim.height = HEIGH;
     
     //set main bitstream encode parameter
     ch_param.main_bs.enc.input_type = ENC_INPUT_H2642D;
@@ -399,11 +409,10 @@ bool CRTMPStream::SendVideo()
     ch_param.main_bs.enc.pext_data = &enc_param_ext;
         
     enc_param_ext.feature_enable = 0;      //CBR
-    printf("open %d\n",__LINE__);      
-    ioctl(enc_fd, DVR_ENC_SET_CHANNEL_PARAM, &ch_param);
-    printf("open %d\n",__LINE__);      
+        
+    ioctl(enc_fd, DVR_ENC_SET_CHANNEL_PARAM, &ch_param);   
     ioctl(enc_fd, DVR_ENC_QUERY_OUTPUT_BUFFER_SIZE, &enc_buf_size);
-    printf("open %d\n",__LINE__);              
+    printf("enc_buf_size=%d\n",enc_buf_size);              
     bs_buf = (unsigned char*) mmap(NULL, enc_buf_size, PROT_READ|PROT_WRITE, 
                                                MAP_SHARED, enc_fd, 0);
     /////////////////////////////////////////////////////////////////            
@@ -423,65 +432,53 @@ bool CRTMPStream::SendVideo()
     //sprintf(tmp_str, "%s.h264", file_name);            
     //rec_file = fopen ( tmp_str , "wb+" );
     gettimeofday(&t1, NULL);        
-    printf("open %d\n",__LINE__);      
+        
     
-    while(!find_pps)
-    {
-    	RTMPMetadata metaData;  
+    
+  	RTMPMetadata metaData;  
 		memset(&metaData,0,sizeof(RTMPMetadata));  
 	  
-		NaluUnit naluUnit;  
-		// 读取SPS帧  
-		ReadOneNaluFromBuf(naluUnit);  
-		metaData.nSpsLen = naluUnit.size;  
+	  // 读取SPS帧  
+		NaluUnit naluUnit; 
+		naluUnit.type = 0; 
+		while(naluUnit.type != 8)
+    {
+	  		ReadOneNaulFromVpu(naluUnit);
+    }
+    metaData.nSpsLen = naluUnit.size;  
 		memcpy(metaData.Sps,naluUnit.data,naluUnit.size);  
-	  
-		// 读取PPS帧  
-		ReadOneNaluFromBuf(naluUnit);  
+		
+	// 读取PPS帧  
+		while(naluUnit.type != 7)
+    {
+	  		ReadOneNaulFromVpu(naluUnit);
+    }
 		metaData.nPpsLen = naluUnit.size;  
 		memcpy(metaData.Pps,naluUnit.data,naluUnit.size);  
 	  
 		// 解码SPS,获取视频图像宽、高信息  
-		int width = 0,height = 0;  
-		h264_decode_sps(metaData.Sps,metaData.nSpsLen,width,height);  
-		metaData.nWidth = width;  
-		metaData.nHeight = height;  
+		int width = WIDTH,height = HEIGHT;  
+		if(h264_decode_sps(metaData.Sps, metaData.nSpsLen , width, height))
+		{
+			metaData.nWidth = width;  
+			metaData.nHeight = height;  
+			printf("decode_sps ok!\n");
+		}
+		printf("width=%d,height=%d\n",width,height);
 		metaData.nFrameRate = 25;  
 		 
 		// 发送MetaData  
 		SendMetadata(&metaData);  
-    }
-    while(1) {          
-            // prepare to select(or poll)
-            rec_fds.fd = enc_fd;      
-            rec_fds.revents = 0;
-            rec_fds.events = POLLIN_MAIN_BS;
-            
-            poll(&rec_fds, 1, 500);     
-            
-            if (!(rec_fds.revents & POLLIN_MAIN_BS)) 
-                continue;
-    		
-            // get dataout buffer   
-            ret = ioctl(enc_fd, DVR_ENC_QUEUE_GET, &data);
-            if(ret < 0)    
-                continue;
-        
-            buf = bs_buf + data.bs.offset;
-            buf_size = data.bs.length;
-            if(!find_pps)
-            {
-		        if( (buf[0] == 0) && (buf[1] == 0) && (buf[2] == 0) && (buf[3] == 1) && (buf[4] == 0x67))
-		        {
-		        	printf("find pps\n");
-		        	find_pps = 1;	
-		        }
-		        printf("not find pps\n");
-		        continue;
-            }
-           
-            ioctl(enc_fd, DVR_ENC_QUEUE_PUT, &data);   
-                
+    while(1) 
+    {          
+        	  unsigned int tick = 0;  
+				    while(ReadOneNaluFromBuf(naluUnit))  
+				    {  
+				        bool bKeyframe  = (naluUnit.type == 0x05) ? TRUE : FALSE;  
+				        // 发送H264数据帧  
+				        SendH264Packet(naluUnit.data,naluUnit.size,bKeyframe,tick);  
+				        tick +=40;  //按帧率25计算，累加时间戳。
+				    }  
             gettimeofday(&t2, NULL);
     
             if ((t2.tv_sec - t1.tv_sec) == 60) {      //<record for 20 seconds. then finish record.     
@@ -502,7 +499,7 @@ bool CRTMPStream::SendVideo()
     munmap((void*)bs_buf, enc_buf_size);      
     
     printf("----------------------------------\n");
-    printf(" Record finish\n");
+    printf(" Send finish\n");
     printf("----------------------------------\n");    
     
     close(enc_fd);      //close_dvr_encode    
@@ -510,9 +507,51 @@ bool CRTMPStream::SendVideo()
 
 	return true;
 }
-int CRTMPStream::ReadOneNaul(char* buffer,int size)
-{
 
+bool CRTMPStream::ReadOneNaulFromVpu(NaluUnit &nalu)
+{
+	unsigned char *buf;
+  int buf_size; 
+  bool find = true;     
+  // prepare to select(or poll)
+  while(1)
+  {
+		  rec_fds.fd = enc_fd;      
+		  rec_fds.revents = 0;
+		  rec_fds.events = POLLIN_MAIN_BS;
+		  
+		  poll(&rec_fds, 1, 500);     
+		  
+		  if (!(rec_fds.revents & POLLIN_MAIN_BS)) 
+		      continue;
+		
+		  // get dataout buffer   
+		  ret = ioctl(enc_fd, DVR_ENC_QUEUE_GET, &data);
+		  if(ret < 0)    
+		      continue;
+		
+		  buf = bs_buf + data.bs.offset;
+		  buf_size = data.bs.length;
+		
+		  if( (buf[0] == 0) && (buf[1] == 0) && (buf[2] == 1) )
+		  {
+		  		nalu.data = &buf[4];
+		  		nalu.type = buf[3]&0x1f;
+		  } 
+		  else if((buf[0] == 0) && (buf[1] == 0) && (buf[2] == 0)  && (buf[3] == 1) )
+		  {
+		  		nalu.data = &buf[5];
+		  		nalu.type = buf[4]&0x1f;
+		  }
+		  else
+		  {
+		  	 find = false;   
+		  }
+		  ioctl(enc_fd, DVR_ENC_QUEUE_PUT, &data);   
+		  break;
+  }
+  return find;
+                
 }  
 bool CRTMPStream::SendH264File(const char *pFileName)  
 {  
