@@ -570,43 +570,53 @@ bool CRTMPStream::SendH264File(const char *pFileName)
     return TRUE;  
 }  
   
-bool CRTMPStream::ReadOneNaluFromBuf(NaluUnit &nalu)  
-{  
-    int i = m_nCurPos;  
-    while(i<m_nFileBufSize)  
-    {  
-        if(m_pFileBuf[i++] == 0x00 &&  
-            m_pFileBuf[i++] == 0x00 &&  
-            m_pFileBuf[i++] == 0x00 &&  
-            m_pFileBuf[i++] == 0x01  
-            )  
-        {  
-            int pos = i;  
-            while (pos < m_nFileBufSize)  
-            {  
-                if(m_pFileBuf[pos++] == 0x00 &&  
-                    m_pFileBuf[pos++] == 0x00 &&  
-                    m_pFileBuf[pos++] == 0x00 &&  
-                    m_pFileBuf[pos++] == 0x01  
-                    )  
-                {  
-                    break;  
-                }  
-            }  
-            if(pos == m_nFileBufSize)  
-            {  
-                nalu.size = pos-i;    
-            }  
-            else  
-            {  
-                nalu.size = (pos-4)-i;  
-            }  
-            nalu.type = m_pFileBuf[i]&0x1f;  
-            nalu.data = &m_pFileBuf[i];  
-  
-            m_nCurPos = pos-4;  
-            return TRUE;  
-        }  
-    }  
-    return FALSE;  
-}  
+bool CRTMPStream::ReadOneNaluFromBuf(NaluUnit &nalu)
+{
+	int i = m_nCurPos;
+	while( i < m_nFileBufSize  )
+	{
+		if(m_pFileBuf[i++] == 0x00 &&
+			m_pFileBuf[i++] == 0x00 &&
+			m_pFileBuf[i++] == 0x00 &&
+			m_pFileBuf[i++] == 0x01
+			)
+		{
+			int pos = i;
+			int num = 4;
+			while (pos < m_nFileBufSize)
+			{
+				if(m_pFileBuf[pos++] == 0x00 &&
+					m_pFileBuf[pos++] == 0x00)
+				{
+					unsigned char c = m_pFileBuf[pos++];
+					if(c == 0x1)
+					{
+						num = 3;
+						break;
+					}
+					else if( (c == 0) && ( m_pFileBuf[pos++] == 0x01) )
+					{
+						num = 4;
+						break;
+					}
+					
+					
+				}
+			}
+			if(pos == m_nFileBufSize)
+			{
+				nalu.size = pos-i;	
+			}
+			else
+			{
+				nalu.size = (pos-num)-i;
+			}
+			nalu.type = m_pFileBuf[i]&0x1f;
+			nalu.data = &m_pFileBuf[i];
+
+			m_nCurPos = pos-num;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
