@@ -37,7 +37,7 @@ purpose:    发送H264视频到RTMP Server，使用libRtmp库
   
 int dvr_fd = 0;
 int enc_fd = 0;
-
+extern bool quit = 0;
 #define WIDTH 1280
 #define HEIGHT 720
 //test record
@@ -450,7 +450,7 @@ bool CRTMPStream::SendVideo()
 	  // 读取SPS帧  
 	NaluUnit naluUnit; 
 	naluUnit.type = 0; 
-	while(naluUnit.type != 8)
+	while(naluUnit.type != 8 && !quit)
     {
 	  	ReadOneNaulFromVpu(naluUnit);
 	  	printf("read sps get[%d]\n",naluUnit.type);
@@ -459,7 +459,7 @@ bool CRTMPStream::SendVideo()
 	memcpy(metaData.Sps,naluUnit.data,naluUnit.size);  
 	
 // 读取PPS帧  
-	while(naluUnit.type != 7)
+	while(naluUnit.type != 7 && !quit)
 	{
 		ReadOneNaulFromVpu(naluUnit);
 		printf("read pps get[%d]\n",naluUnit.type);
@@ -480,7 +480,7 @@ bool CRTMPStream::SendVideo()
 		 
 	// 发送MetaData  
 	SendMetadata(&metaData);  
-    while(1) 
+    while(!quit) 
     {          
 		unsigned int tick = 0;  
 		while(ReadOneNaluFromBuf(naluUnit))  
@@ -491,6 +491,7 @@ bool CRTMPStream::SendVideo()
 			SendH264Packet(naluUnit.data,naluUnit.size,bKeyframe,tick);  
 			
 			tick +=40;  //按帧率25计算，累加时间戳。
+			
 		}  
 		gettimeofday(&t2, NULL);
 
